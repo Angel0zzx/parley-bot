@@ -1,0 +1,5 @@
+.env
+.scout_cache.json
+historial_picks.csv
+__pycache__/
+*.pyc
