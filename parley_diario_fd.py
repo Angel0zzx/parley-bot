@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-parley_diario_fd.py — Parley diario con football-data.org + Poisson.
+parley_diario_fd.py — Parley diario con football-data.org + modelo Poisson.
 Itera por competición (el endpoint global no funciona en plan gratuito).
+Filtra por fecha en HORA LOCAL y descarta partidos ya iniciados.
 """
 
 import argparse
@@ -11,7 +12,7 @@ import math
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -163,14 +164,19 @@ def get_team_form(team_id, cache):
 
 
 # --------------------------------------------------------------------------
-# PARTIDOS POR COMPETICIÓN
+# PARTIDOS POR COMPETICIÓN (con filtro en hora local + solo futuros)
 # --------------------------------------------------------------------------
-def get_partidos_fecha(fecha_str):
-    """Itera por competición porque el endpoint global no funciona en free."""
+def get_partidos_fecha(fecha_str, tz, solo_futuros=True):
+    f_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+    date_from = (f_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+    date_to = (f_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    ahora_utc = datetime.now(timezone.utc)
     partidos = []
+
     for code, nombre in COMPETICIONES.items():
         data = api_get(f"/competitions/{code}/matches",
-                       params={"dateFrom": fecha_str, "dateTo": fecha_str})
+                       params={"dateFrom": date_from, "dateTo": date_to})
         if not data:
             continue
 
@@ -186,6 +192,13 @@ def get_partidos_fecha(fecha_str):
             except ValueError:
                 continue
 
+            kickoff_local = kickoff.astimezone(tz)
+            if kickoff_local.strftime("%Y-%m-%d") != fecha_str:
+                continue
+
+            if solo_futuros and kickoff <= ahora_utc:
+                continue
+
             partidos.append({
                 "id": m.get("id"),
                 "kickoff": kickoff,
@@ -197,7 +210,8 @@ def get_partidos_fecha(fecha_str):
                 "away": m.get("awayTeam", {}).get("name", "?"),
             })
 
-    log.info("Partidos en %s (todas las competiciones): %d", fecha_str, len(partidos))
+    log.info("Partidos en %s (hora local %s, solo futuros=%s): %d",
+             fecha_str, tz.key, solo_futuros, len(partidos))
     return partidos
 
 
@@ -215,7 +229,6 @@ def generar_picks(partido, cache):
 
     picks = []
 
-    # Over/Under goles
     for linea in LINEAS_GOLES:
         p_over = prob_over(lam_total, linea)
         p_under = 1 - p_over
@@ -242,7 +255,6 @@ def generar_picks(partido, cache):
                 "kickoff": partido["kickoff"],
             })
 
-    # BTTS
     p_btts = prob_btts(lam_h, lam_a)
     if RIESGO_BAJO_MIN <= p_btts * 100 <= PROB_MAX:
         picks.append({
@@ -395,6 +407,8 @@ def main():
     parser = argparse.ArgumentParser(description="Parley diario — football-data.org")
     parser.add_argument("--fecha", type=str, default=None, help="YYYY-MM-DD (def. hoy)")
     parser.add_argument("--debug", action="store_true", help="Solo imprime, sin enviar")
+    parser.add_argument("--incluir-pasados", action="store_true",
+                        help="Incluye partidos que ya empezaron hoy")
     args = parser.parse_args()
 
     if not FOOTBALL_DATA_KEY:
@@ -420,8 +434,9 @@ def main():
 
     cache = {"form": {}}
 
-    # 1) Partidos por competición
-    partidos = get_partidos_fecha(fecha_obj_str)
+    solo_futuros = not args.incluir_pasados
+    partidos = get_partidos_fecha(fecha_obj_str, tz, solo_futuros=solo_futuros)
+
     if not partidos:
         msg = (f"🎯 <b>PARLEY DIARIO — {fecha_str}</b>\n"
                f"📅 Fecha: <b>{fecha_obj_str}</b>\n\n"
@@ -432,7 +447,6 @@ def main():
             print(msg)
         return
 
-    # 2) Generar picks
     todos_picks = []
     for partido in partidos:
         picks = generar_picks(partido, cache)
@@ -441,7 +455,6 @@ def main():
 
     log.info("Picks generados: %d", len(todos_picks))
 
-    # 3) Armar parleys
     parleys = armar_parleys(todos_picks)
 
     if args.debug:
@@ -453,7 +466,6 @@ def main():
                 print(f"  {p['seleccion']} ({p['partido']}) prob={p['prob']:.1f}%")
         return
 
-    # 4) Enviar
     for nivel in ["seguro", "medio", "arriesgado"]:
         msg = build_mensaje(nivel, parleys[nivel], fecha_obj_str, fecha_str, tz)
         ok = send_telegram(msg)
