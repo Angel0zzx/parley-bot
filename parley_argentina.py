@@ -2,12 +2,6 @@
 """
 parley_argentina.py — Parley diario con Bzzoiro Sports Data + modelo Poisson.
 Cubre la Liga Profesional Argentina y otras ligas de Sudamérica.
-
-Uso:
-    python parley_argentina.py                    # analiza HOY
-    python parley_argentina.py --fecha 2026-10-17 # analiza ese día
-    python parley_argentina.py --debug            # solo imprime, sin enviar
-    python parley_argentina.py --incluir-pasados  # incluye en vivo/terminados
 """
 
 import argparse
@@ -38,9 +32,6 @@ TIMEZONE = os.getenv("TZ_LOCAL", "America/Guayaquil")
 # --- Ligas a cubrir (IDs de Bzzoiro) -------------------------------------
 LIGAS_SUDAMERICA = {
     85: "Liga Profesional Argentina",
-    # 268: "Copa Libertadores",
-    # 269: "Copa Sudamericana",
-    # 1: "Brasileirao",
 }
 
 # --- Modelo ---------------------------------------------------------------
@@ -63,8 +54,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 log = logging.getLogger("parley_arg")
 
 _last_call = 0.0
-
-# Estados que NO se juegan (excluir siempre)
 STATUS_EXCLUIDOS = {"cancelled", "postponed", "unresolved", "abandoned"}
 
 
@@ -135,11 +124,13 @@ def get_team_form(team_id, cache):
         return cache["form"][key]
 
     hoy = datetime.now(timezone.utc).date()
-    date_from = (hoy - timedelta(days=120)).strftime("%Y-%m-%d")
+    date_from = (hoy - timedelta(days=180)).strftime("%Y-%m-%d")
     date_to = hoy.strftime("%Y-%m-%d")
 
+    # ✅ CAMBIO CLAVE: team_id en lugar de team, y status=finished
     data = api_get("/events/", params={
-        "team": team_id,
+        "team_id": team_id,
+        "status": "finished",
         "date_from": date_from,
         "date_to": date_to,
     })
@@ -148,30 +139,26 @@ def get_team_form(team_id, cache):
         return None
 
     partidos = data.get("results", [])
-    terminados = []
+    if len(partidos) < MIN_MATCHES_REQUIRED:
+        cache["form"][key] = None
+        return None
+
+    partidos.sort(key=lambda m: m.get("event_date", ""), reverse=True)
+    partidos = partidos[:RECENT_MATCHES]
+
+    gf, ga = [], []
     for m in partidos:
-        if m.get("status") != "finished":
-            continue
         hs = m.get("home_score")
         as_ = m.get("away_score")
         if hs is None or as_ is None:
             continue
-        terminados.append(m)
-
-    if len(terminados) < MIN_MATCHES_REQUIRED:
-        cache["form"][key] = None
-        return None
-
-    terminados.sort(key=lambda m: m.get("event_date", ""), reverse=True)
-    terminados = terminados[:RECENT_MATCHES]
-
-    gf, ga = [], []
-    for m in terminados:
-        hs = m["home_score"]
-        as_ = m["away_score"]
-        es_local = m.get("home_team_obj", {}).get("id") == team_id
+        es_local = m.get("home_team_id") == team_id
         gf.append(hs if es_local else as_)
         ga.append(as_ if es_local else hs)
+
+    if len(gf) < MIN_MATCHES_REQUIRED:
+        cache["form"][key] = None
+        return None
 
     form = {
         "gf": sum(gf) / len(gf),
@@ -195,7 +182,7 @@ def get_partidos_fecha(fecha_str, tz, solo_futuros=True):
 
     for league_id, nombre in LIGAS_SUDAMERICA.items():
         data = api_get("/events/", params={
-            "league": league_id,
+            "league_id": league_id,
             "date_from": date_from,
             "date_to": date_to,
         })
@@ -205,7 +192,6 @@ def get_partidos_fecha(fecha_str, tz, solo_futuros=True):
         for m in data.get("results", []):
             status = (m.get("status") or "").lower()
 
-            # Excluir solo los que no se juegan
             if status in STATUS_EXCLUIDOS:
                 continue
 
@@ -217,12 +203,10 @@ def get_partidos_fecha(fecha_str, tz, solo_futuros=True):
             except ValueError:
                 continue
 
-            # Filtro por fecha en hora LOCAL
             kickoff_local = kickoff.astimezone(tz)
             if kickoff_local.strftime("%Y-%m-%d") != fecha_str:
                 continue
 
-            # Filtro de partidos ya iniciados
             if solo_futuros and kickoff <= ahora_utc:
                 continue
 
@@ -230,9 +214,9 @@ def get_partidos_fecha(fecha_str, tz, solo_futuros=True):
                 "id": m.get("id"),
                 "kickoff": kickoff,
                 "liga": nombre,
-                "home_id": m.get("home_team_obj", {}).get("id"),
+                "home_id": m.get("home_team_id"),
                 "home": m.get("home_team", "?"),
-                "away_id": m.get("away_team_obj", {}).get("id"),
+                "away_id": m.get("away_team_id"),
                 "away": m.get("away_team", "?"),
             })
 
