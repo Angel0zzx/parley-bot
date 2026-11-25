@@ -1,5 +1,5 @@
 """
-Unified CLI interface for Parley bot with interactive menu support and persistent cache.
+Unified CLI interface for Parley bot with interactive menu support, persistent cache, and setup wizard.
 """
 
 import argparse
@@ -9,6 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from parley.config import (
+    ENV_PATH,
     FOOTBALL_DATA_KEY,
     BZZOIRO_API_KEY,
     TELEGRAM_BOT_TOKEN,
@@ -20,6 +21,7 @@ from parley.providers.bzzoiro import BzzoiroProvider
 from parley.models.strategy import generar_picks, armar_parleys
 from parley.notifiers.telegram import send_telegram, build_mensaje
 from parley.utils.cache import load_cache
+from parley.utils.setup_wizard import run_setup_wizard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("parley.cli")
@@ -43,20 +45,26 @@ def debug_dump(picks, tz):
 
 
 def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pasados):
+    # Recargar variables de entorno por si el wizard acaba de actualizar el .env
+    fd_key = os.getenv("FOOTBALL_DATA_KEY", FOOTBALL_DATA_KEY)
+    bzz_key = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+    tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+
     if provider_code == "fd":
-        if not FOOTBALL_DATA_KEY:
+        if not fd_key:
             log.error("Falta FOOTBALL_DATA_KEY en el .env")
             return
-        provider = FootballDataProvider(FOOTBALL_DATA_KEY)
+        provider = FootballDataProvider(fd_key)
         titulo_prefijo = "FOOTBALL-DATA"
     else:
-        if not BZZOIRO_API_KEY:
+        if not bzz_key:
             log.error("Falta BZZOIRO_API_KEY en el .env")
             return
-        provider = BzzoiroProvider(BZZOIRO_API_KEY)
+        provider = BzzoiroProvider(bzz_key)
         titulo_prefijo = "SUDAMÉRICA"
 
-    if not debug and (not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID):
+    if not debug and (not tg_token or not tg_chat_id):
         log.error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID en el .env")
         return
 
@@ -69,7 +77,7 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
                f"📅 Fecha: <b>{fecha_obj_str}</b>\n\n"
                f"⚠️ No hay partidos programados para esa fecha.")
         if not debug:
-            send_telegram(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+            send_telegram(tg_token, tg_chat_id, msg)
         else:
             print(msg)
         return
@@ -97,9 +105,11 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
 
     for nivel in ["seguro", "medio", "arriesgado"]:
         msg = build_mensaje(nivel, parleys[nivel], fecha_obj_str, fecha_str, tz, titulo_prefijo)
-        ok = send_telegram(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+        ok = send_telegram(tg_token, tg_chat_id, msg)
         log.info("Enviado '%s' (%d selecciones): %s", nivel, len(parleys[nivel]), "OK" if ok else "FALLÓ")
 
+
+import os
 
 def main():
     parser = argparse.ArgumentParser(description="Parley bot unificado — football-data.org / Bzzoiro")
@@ -109,23 +119,35 @@ def main():
     parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
     args = parser.parse_args()
 
+    # Si no existe .env o no hay ninguna API Key configurada, ejecutar asistente de configuración inicial
+    current_fd = os.getenv("FOOTBALL_DATA_KEY", FOOTBALL_DATA_KEY)
+    current_bzz = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
+    if not ENV_PATH.exists() or (not current_fd and not current_bzz):
+        run_setup_wizard(ENV_PATH)
+
     provider_arg = args.provider
     # Interactive menu if no arguments passed (e.g. double click on Windows .exe)
     if provider_arg is None and len(sys.argv) == 1:
-        print("\n==============================================")
-        print("          BOT DE PARLEY - MENÚ INTERACTIVO    ")
-        print("==============================================")
-        print("Selecciona el proveedor de partidos:")
-        print("  [1] Football-Data.org (Ligas Europeas + Champions)")
-        print("  [2] Bzzoiro Sports Data (Liga Argentina / Sudamérica)")
-        print("  [3] Ambos proveedores")
-        opcion = input("Elige una opción [1-3] (por defecto 1): ").strip()
-        if opcion == "2":
-            provider_arg = "bzzoiro"
-        elif opcion == "3":
-            provider_arg = "ambos"
-        else:
-            provider_arg = "fd"
+        while True:
+            print("\n==============================================")
+            print("          BOT DE PARLEY - MENÚ INTERACTIVO    ")
+            print("==============================================")
+            print("Selecciona una opción:")
+            print("  [1] Football-Data.org (Ligas Europeas + Champions)")
+            print("  [2] Bzzoiro Sports Data (Liga Argentina / Sudamérica)")
+            print("  [3] Ambos proveedores")
+            print("  [4] Reconfigurar credenciales (.env)")
+            opcion = input("Elige una opción [1-4] (por defecto 1): ").strip()
+            if opcion == "4":
+                run_setup_wizard(ENV_PATH)
+                continue
+            elif opcion == "2":
+                provider_arg = "bzzoiro"
+            elif opcion == "3":
+                provider_arg = "ambos"
+            else:
+                provider_arg = "fd"
+            break
 
         debug_op = input("¿Modo debug (solo imprimir en pantalla)? [s/N]: ").strip().lower()
         if debug_op == "s":
@@ -134,7 +156,7 @@ def main():
     if provider_arg is None:
         provider_arg = "fd"
 
-    tz = ZoneInfo(TIMEZONE)
+    tz = ZoneInfo(os.getenv("TZ_LOCAL", TIMEZONE))
     ahora = datetime.now(tz)
     fecha_obj_str = args.fecha or ahora.date().strftime("%Y-%m-%d")
     fecha_str = ahora.strftime("%Y-%m-%d %H:%M")
