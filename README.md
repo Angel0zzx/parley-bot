@@ -152,7 +152,6 @@ Parley Bot obtiene la forma reciente de los equipos y los partidos desde uno o d
 
 La salida se agrupa en tres parleys (`seguro`, `medio`, `arriesgado`) y puede enviarse a Telegram o imprimirse en consola en modo debug.
 
-> **Aviso legal:** Las probabilidades son estimaciones estadísticas, no garantías. Úsalas bajo tu propio riesgo.
 
 ### Inicio rápido (Windows `.exe`)
 
