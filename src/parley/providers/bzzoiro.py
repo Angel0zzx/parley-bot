@@ -1,5 +1,5 @@
 """
-Bzzoiro Sports Data provider implementation (Argentina / Sudamérica).
+Bzzoiro Sports Data provider implementation with disk cache and prefixed keys.
 """
 
 import logging
@@ -11,6 +11,7 @@ import requests
 
 from parley.providers.base import BaseProvider
 from parley.config import LIGAS_SUDAMERICA, RECENT_MATCHES, MIN_MATCHES_REQUIRED
+from parley.utils.cache import load_cache, save_cache
 
 log = logging.getLogger("parley.bzzoiro")
 BASE_URL = "https://sports.bzzoiro.com/api/v2"
@@ -97,8 +98,11 @@ class BzzoiroProvider(BaseProvider):
         log.info("Partidos Bzzoiro en %s: %d", fecha_str, len(partidos))
         return partidos
 
-    def get_team_form(self, team_id: Any, cache: Dict[str, Any]) -> Optional[Dict[str, float]]:
-        key = str(team_id)
+    def get_team_form(self, team_id: Any, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, float]]:
+        if cache is None:
+            cache = load_cache()
+
+        key = f"bzz_{team_id}"
         if key in cache.get("form", {}):
             return cache["form"][key]
 
@@ -109,11 +113,13 @@ class BzzoiroProvider(BaseProvider):
         data = self._api_get("/events/", params={"team_id": team_id, "status": "finished", "date_from": date_from, "date_to": date_to})
         if not data:
             cache.setdefault("form", {})[key] = None
+            save_cache(cache)
             return None
 
         partidos = data.get("results", [])
         if len(partidos) < MIN_MATCHES_REQUIRED:
             cache.setdefault("form", {})[key] = None
+            save_cache(cache)
             return None
 
         partidos.sort(key=lambda m: m.get("event_date", ""), reverse=True)
@@ -131,8 +137,10 @@ class BzzoiroProvider(BaseProvider):
 
         if len(gf) < MIN_MATCHES_REQUIRED:
             cache.setdefault("form", {})[key] = None
+            save_cache(cache)
             return None
 
         form = {"gf": sum(gf) / len(gf), "ga": sum(ga) / len(ga), "n": len(gf)}
         cache.setdefault("form", {})[key] = form
+        save_cache(cache)
         return form

@@ -1,5 +1,5 @@
 """
-Football-data.org provider implementation.
+Football-data.org provider implementation with disk cache and prefixed keys.
 """
 
 import logging
@@ -11,6 +11,7 @@ import requests
 
 from parley.providers.base import BaseProvider
 from parley.config import COMPETICIONES_FD, RECENT_MATCHES, MIN_MATCHES_REQUIRED
+from parley.utils.cache import load_cache, save_cache
 
 log = logging.getLogger("parley.fd")
 BASE_URL = "https://api.football-data.org/v4"
@@ -96,14 +97,18 @@ class FootballDataProvider(BaseProvider):
         log.info("Partidos Football-Data en %s: %d", fecha_str, len(partidos))
         return partidos
 
-    def get_team_form(self, team_id: Any, cache: Dict[str, Any]) -> Optional[Dict[str, float]]:
-        key = str(team_id)
+    def get_team_form(self, team_id: Any, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, float]]:
+        if cache is None:
+            cache = load_cache()
+
+        key = f"fd_{team_id}"
         if key in cache.get("form", {}):
             return cache["form"][key]
 
         data = self._api_get(f"/teams/{team_id}/matches", params={"status": "FINISHED", "limit": RECENT_MATCHES})
         if not data:
             cache.setdefault("form", {})[key] = None
+            save_cache(cache)
             return None
 
         partidos = data.get("matches", [])
@@ -113,6 +118,8 @@ class FootballDataProvider(BaseProvider):
         gf, ga = [], []
         for m in partidos:
             score = m.get("score", {}).get("fullTime", {})
+            if not score:
+                continue
             h = score.get("home")
             a = score.get("away")
             if h is None or a is None:
@@ -123,8 +130,10 @@ class FootballDataProvider(BaseProvider):
 
         if len(gf) < MIN_MATCHES_REQUIRED:
             cache.setdefault("form", {})[key] = None
+            save_cache(cache)
             return None
 
         form = {"gf": sum(gf) / len(gf), "ga": sum(ga) / len(ga), "n": len(gf)}
         cache.setdefault("form", {})[key] = form
+        save_cache(cache)
         return form

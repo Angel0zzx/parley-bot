@@ -1,5 +1,5 @@
 """
-Unified CLI interface for Parley bot.
+Unified CLI interface for Parley bot with interactive menu support and persistent cache.
 """
 
 import argparse
@@ -19,6 +19,7 @@ from parley.providers.football_data import FootballDataProvider
 from parley.providers.bzzoiro import BzzoiroProvider
 from parley.models.strategy import generar_picks, armar_parleys
 from parley.notifiers.telegram import send_telegram, build_mensaje
+from parley.utils.cache import load_cache
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("parley.cli")
@@ -41,58 +42,39 @@ def debug_dump(picks, tz):
         print()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Parley bot unificado — football-data.org / Bzzoiro")
-    parser.add_argument("--provider", type=str, choices=["fd", "bzzoiro"], default="fd", help="Proveedor de datos (fd o bzzoiro)")
-    parser.add_argument("--fecha", type=str, default=None, help="YYYY-MM-DD (def. hoy)")
-    parser.add_argument("--debug", action="store_true", help="Solo imprime, sin enviar")
-    parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
-    args = parser.parse_args()
-
-    if args.provider == "fd":
+def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pasados):
+    if provider_code == "fd":
         if not FOOTBALL_DATA_KEY:
-            sys.exit("Falta FOOTBALL_DATA_KEY en el .env")
+            log.error("Falta FOOTBALL_DATA_KEY en el .env")
+            return
         provider = FootballDataProvider(FOOTBALL_DATA_KEY)
         titulo_prefijo = "FOOTBALL-DATA"
     else:
         if not BZZOIRO_API_KEY:
-            sys.exit("Falta BZZOIRO_API_KEY en el .env")
+            log.error("Falta BZZOIRO_API_KEY en el .env")
+            return
         provider = BzzoiroProvider(BZZOIRO_API_KEY)
         titulo_prefijo = "SUDAMÉRICA"
 
-    if not args.debug and (not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID):
-        sys.exit("Faltan TELEGRAM_BOT_TOKEN/TELEGRAM_TOKEN o TELEGRAM_CHAT_ID en el .env")
+    if not debug and (not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID):
+        log.error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID en el .env")
+        return
 
-    tz = ZoneInfo(TIMEZONE)
-    ahora = datetime.now(tz)
-
-    if args.fecha:
-        try:
-            fecha_obj = datetime.strptime(args.fecha, "%Y-%m-%d").date()
-        except ValueError:
-            sys.exit(f"Fecha inválida: {args.fecha} (usa YYYY-MM-DD)")
-    else:
-        fecha_obj = ahora.date()
-
-    fecha_obj_str = fecha_obj.strftime("%Y-%m-%d")
-    fecha_str = ahora.strftime("%Y-%m-%d %H:%M")
-
-    log.info("Fecha objetivo: %s [%s]", fecha_obj_str, args.provider)
-
-    cache = {"form": {}}
-    solo_futuros = not args.incluir_pasados
+    log.info("Ejecutando proveedor: %s para fecha %s", titulo_prefijo, fecha_obj_str)
+    solo_futuros = not incluir_pasados
     partidos = provider.get_matches(fecha_obj_str, tz, solo_futuros=solo_futuros)
 
     if not partidos:
         msg = (f"🎯 <b>PARLEY {titulo_prefijo} — {fecha_str}</b>\n"
                f"📅 Fecha: <b>{fecha_obj_str}</b>\n\n"
                f"⚠️ No hay partidos programados para esa fecha.")
-        if not args.debug:
+        if not debug:
             send_telegram(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
         else:
             print(msg)
         return
 
+    cache = load_cache()
     todos_picks = []
     for partido in partidos:
         hf = provider.get_team_form(partido.get("home_id"), cache)
@@ -101,12 +83,12 @@ def main():
         todos_picks.extend(picks)
         log.info("  %s vs %s → %d picks", partido["home"], partido["away"], len(picks))
 
-    log.info("Picks generados: %d", len(todos_picks))
+    log.info("Picks generados (%s): %d", titulo_prefijo, len(todos_picks))
     parleys = armar_parleys(todos_picks)
 
-    if args.debug:
+    if debug:
         debug_dump(todos_picks, tz)
-        print("\n--- PARLEYS ---")
+        print(f"\n--- PARLEYS ({titulo_prefijo}) ---")
         for nivel, parley in parleys.items():
             print(f"\n{nivel.upper()} ({len(parley)} selecciones):")
             for p in parley:
@@ -117,6 +99,54 @@ def main():
         msg = build_mensaje(nivel, parleys[nivel], fecha_obj_str, fecha_str, tz, titulo_prefijo)
         ok = send_telegram(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
         log.info("Enviado '%s' (%d selecciones): %s", nivel, len(parleys[nivel]), "OK" if ok else "FALLÓ")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Parley bot unificado — football-data.org / Bzzoiro")
+    parser.add_argument("--provider", type=str, choices=["fd", "bzzoiro", "ambos"], default=None, help="Proveedor: fd, bzzoiro o ambos")
+    parser.add_argument("--fecha", type=str, default=None, help="YYYY-MM-DD (def. hoy)")
+    parser.add_argument("--debug", action="store_true", help="Solo imprime, sin enviar")
+    parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
+    args = parser.parse_args()
+
+    provider_arg = args.provider
+    # Interactive menu if no arguments passed (e.g. double click on Windows .exe)
+    if provider_arg is None and len(sys.argv) == 1:
+        print("\n==============================================")
+        print("          BOT DE PARLEY - MENÚ INTERACTIVO    ")
+        print("==============================================")
+        print("Selecciona el proveedor de partidos:")
+        print("  [1] Football-Data.org (Ligas Europeas + Champions)")
+        print("  [2] Bzzoiro Sports Data (Liga Argentina / Sudamérica)")
+        print("  [3] Ambos proveedores")
+        opcion = input("Elige una opción [1-3] (por defecto 1): ").strip()
+        if opcion == "2":
+            provider_arg = "bzzoiro"
+        elif opcion == "3":
+            provider_arg = "ambos"
+        else:
+            provider_arg = "fd"
+
+        debug_op = input("¿Modo debug (solo imprimir en pantalla)? [s/N]: ").strip().lower()
+        if debug_op == "s":
+            args.debug = True
+
+    if provider_arg is None:
+        provider_arg = "fd"
+
+    tz = ZoneInfo(TIMEZONE)
+    ahora = datetime.now(tz)
+    fecha_obj_str = args.fecha or ahora.date().strftime("%Y-%m-%d")
+    fecha_str = ahora.strftime("%Y-%m-%d %H:%M")
+
+    if provider_arg == "ambos":
+        run_provider("fd", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
+        run_provider("bzzoiro", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
+    else:
+        run_provider(provider_arg, fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
+
+    if getattr(sys, 'frozen', False):
+        input("\nProceso finalizado. Presiona Enter para salir...")
 
 
 if __name__ == "__main__":

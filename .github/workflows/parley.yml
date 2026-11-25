@@ -17,8 +17,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
+      - name: Instalar dependencias y paquete
+        run: |
+          pip install -r requirements.txt
+          pip install .
 
       - name: Ejecutar parley
         env:
@@ -26,4 +28,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TZ_LOCAL: America/Guayaquil
-        run: python parley_diario_fd.py
+        run: python -m parley.cli --provider fd
