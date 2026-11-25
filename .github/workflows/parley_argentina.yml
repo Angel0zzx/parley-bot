@@ -2,7 +2,7 @@ name: Parley Sudamerica
 
 on:
   schedule:
-    - cron: '0 11 * * *'   # 6 AM Ecuador
+    - cron: '0 13 * * *'   # 8 AM Colombia (UTC-5)
   workflow_dispatch:
 
 jobs:

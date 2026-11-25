@@ -119,10 +119,10 @@ def main():
     parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
     args = parser.parse_args()
 
-    # Si no existe .env o no hay ninguna API Key configurada, ejecutar asistente de configuración inicial
+    # Ejecutar el asistente solo si faltan ambas credenciales y la terminal es interactiva
     current_fd = os.getenv("FOOTBALL_DATA_KEY", FOOTBALL_DATA_KEY)
     current_bzz = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
-    if not ENV_PATH.exists() or (not current_fd and not current_bzz):
+    if not current_fd and not current_bzz and sys.stdin.isatty():
         run_setup_wizard(ENV_PATH)
 
     provider_arg = args.provider

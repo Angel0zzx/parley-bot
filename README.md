@@ -84,6 +84,8 @@ Team form is cached on disk in **`cache.json`** with a **6-hour TTL**, reducing 
 ### Running from source
 
 ```bash
+git clone https://github.com/Angel0zzx/parley-bot.git
+cd parley-bot
 pip install -r requirements.txt
 pip install .
 python -m parley.cli --provider fd
@@ -152,7 +154,6 @@ Parley Bot obtiene la forma reciente de los equipos y los partidos desde uno o d
 
 La salida se agrupa en tres parleys (`seguro`, `medio`, `arriesgado`) y puede enviarse a Telegram o imprimirse en consola en modo debug.
 
-
 ### Inicio rápido (Windows `.exe`)
 
 1. **Descarga el ZIP** de la última versión y extráelo en cualquier carpeta.
@@ -171,6 +172,8 @@ El código está organizado como un paquete modular de Python en `src/parley/` (
 Ejecución desde el código fuente:
 
 ```bash
+git clone https://github.com/Angel0zzx/parley-bot.git
+cd parley-bot
 pip install -r requirements.txt
 pip install .
 python -m parley.cli --provider fd
