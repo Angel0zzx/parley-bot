@@ -8,7 +8,6 @@ from pathlib import Path
 from parley.utils.setup_wizard import run_setup_wizard
 
 
-@patch("parley.utils.setup_wizard.webbrowser.open", return_value=True)
 @patch("parley.utils.setup_wizard.requests.get")
 @patch("builtins.input", side_effect=[
     "s",            # configurar fd
@@ -19,7 +18,7 @@ from parley.utils.setup_wizard import run_setup_wizard
     "",             # enter tras /start
     "1"             # opcion timezone (Guayaquil)
 ])
-def test_run_setup_wizard(mock_input, mock_requests_get, mock_webbrowser, tmp_path):
+def test_run_setup_wizard(mock_input, mock_requests_get, tmp_path):
     env_file = tmp_path / ".env"
 
     mock_resp = MagicMock()

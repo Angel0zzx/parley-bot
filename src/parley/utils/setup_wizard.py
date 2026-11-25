@@ -4,7 +4,6 @@ Interactive Zero-Config Setup Wizard for Parley Bot.
 
 import os
 import time
-import webbrowser
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
@@ -23,23 +22,15 @@ def run_setup_wizard(env_path: Path) -> None:
     configure_fd = input("¿Deseas configurar Football-Data.org (Recomendado, Plan Gratuito)? [S/n]: ").strip().lower()
     fd_key = ""
     if configure_fd != "n":
-        print("Abriendo sitio de registro de Football-Data.org...")
-        try:
-            webbrowser.open("https://www.football-data.org/client/register")
-        except Exception:
-            pass
-        print("🔗 Enlace: https://www.football-data.org/client/register")
+        print("Abre manualmente este enlace en tu navegador para registrarte y obtener tu API Key:")
+        print("  https://www.football-data.org/client/register")
         fd_key = input("Pega tu API Key de Football-Data.org (o presiona Enter para omitir): ").strip()
 
     configure_bzzoiro = input("\n¿Deseas configurar Bzzoiro Sports Data (Opcional, Sudamérica/Argentina)? [s/N]: ").strip().lower()
     bzz_key = ""
     if configure_bzzoiro == "s":
-        print("Abriendo sitio de Bzzoiro Sports Data...")
-        try:
-            webbrowser.open("https://sports.bzzoiro.com/")
-        except Exception:
-            pass
-        print("🔗 Enlace: https://sports.bzzoiro.com/")
+        print("Abre manualmente este enlace en tu navegador para registrarte y obtener tu API Key:")
+        print("  https://sports.bzzoiro.com/")
         bzz_key = input("Pega tu API Key de Bzzoiro (o presiona Enter para omitir): ").strip()
 
     # Paso 2: Telegram
@@ -48,11 +39,8 @@ def run_setup_wizard(env_path: Path) -> None:
     tg_token = ""
     tg_chat_id = ""
     if configure_telegram != "n":
-        print("1. Abre Telegram y busca a @BotFather (https://t.me/BotFather) para crear tu bot (/newbot).")
-        try:
-            webbrowser.open("https://t.me/BotFather")
-        except Exception:
-            pass
+        print("1. Abre manualmente este enlace en tu navegador y busca a @BotFather para crear tu bot (/newbot):")
+        print("   https://t.me/BotFather")
         tg_token = input("Pega el TELEGRAM_BOT_TOKEN proporcionado por BotFather: ").strip()
 
         if tg_token:
