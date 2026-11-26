@@ -1,9 +1,12 @@
 name: Parley Sudamerica
 
 on:
-  schedule:
-    - cron: '0 13 * * *'   # 8 AM Colombia (UTC-5)
+  # schedule:
+  #   - cron: '0 13 * * *'   # 8 AM Colombia (UTC-5)
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   parley:
@@ -21,5 +24,5 @@ jobs:
           BZZOIRO_API_KEY: ${{ secrets.BZZOIRO_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TZ_LOCAL: America/Guayaquil
+          TZ_LOCAL: America/Bogota
         run: python -m parley.cli --provider bzzoiro

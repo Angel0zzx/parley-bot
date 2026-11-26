@@ -2,8 +2,11 @@ name: Parley Diario
 
 on:
   schedule:
-    - cron: '0 13 * * *'
+    - cron: '15 11 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   parley:
@@ -27,5 +30,5 @@ jobs:
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TZ_LOCAL: America/Guayaquil
+          TZ_LOCAL: America/Bogota
         run: python -m parley.cli --provider fd
