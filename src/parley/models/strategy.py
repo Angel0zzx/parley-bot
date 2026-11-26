@@ -1,9 +1,9 @@
 """
-Strategy module: pick generation, risk classification, and parley building.
+Strategy module: pick generation, risk classification, EV filtering and parley building.
 """
 
 from typing import Dict, List, Any, Optional
-from parley.config import DIXON_COLES_RHO
+from parley.config import DIXON_COLES_RHO, MIN_EV
 from parley.models.poisson import (
     expected_goals_v2,
     prob_1x2,
@@ -23,11 +23,85 @@ PROB_MAX = 95.0
 PARLEY_MAX = 3
 
 
+def _odds_entry_for_pick(pick: Dict[str, Any], odds: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    mercado = pick.get("mercado")
+    seleccion = pick.get("seleccion", "")
+
+    if mercado == "1X2":
+        key = {"Local (1)": "home", "Empate (X)": "draw", "Visitante (2)": "away"}.get(seleccion)
+        return odds.get("h2h", {}).get(key) if key else None
+
+    if mercado == "Doble Oportunidad":
+        if seleccion.startswith("1X"):
+            key = "1X"
+        elif seleccion.startswith("X2"):
+            key = "X2"
+        else:
+            key = None
+        return odds.get("dc", {}).get(key) if key else None
+
+    if mercado == "DNB":
+        if seleccion.startswith("Local"):
+            key = "home"
+        elif seleccion.startswith("Visitante"):
+            key = "away"
+        else:
+            key = None
+        return odds.get("dnb", {}).get(key) if key else None
+
+    if mercado == "Goles":
+        parts = seleccion.split()
+        if len(parts) == 2:
+            side = parts[0].lower()
+            try:
+                linea = float(parts[1])
+            except ValueError:
+                return None
+            return odds.get("totals", {}).get(linea, {}).get(side)
+
+    return None
+
+
+def attach_odds(pick: Dict[str, Any], odds: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Attach real/derived odds to a pick when available."""
+    if not odds:
+        return pick
+    entry = _odds_entry_for_pick(pick, odds)
+    if entry and entry.get("cuota"):
+        pick["cuota_real"] = float(entry["cuota"])
+        pick["casa"] = entry.get("casa")
+        pick["derivada"] = bool(entry.get("derivada"))
+    return pick
+
+
+def filter_by_ev(picks: List[Dict[str, Any]], min_ev: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Compute EV/edge and keep picks with real odds only when EV > min_ev."""
+    min_ev = MIN_EV if min_ev is None else min_ev
+    kept: List[Dict[str, Any]] = []
+    for pick in picks:
+        cuota = pick.get("cuota_real")
+        if cuota:
+            prob = pick["prob"] / 100.0
+            ev = prob * cuota - 1.0
+            edge = prob - (1.0 / cuota)
+            pick["ev"] = ev
+            pick["edge"] = edge
+            if ev > min_ev:
+                kept.append(pick)
+        else:
+            pick["ev"] = None
+            pick["edge"] = None
+            kept.append(pick)
+    return kept
+
+
 def generar_picks(
     partido: Dict[str, Any],
     home_form: Optional[Dict[str, Any]],
     away_form: Optional[Dict[str, Any]],
     rho: Optional[float] = None,
+    odds: Optional[Dict[str, Any]] = None,
+    min_ev: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """Generate picks for all v2.0 markets from the Dixon-Coles model."""
     if not home_form or not away_form:
@@ -52,7 +126,10 @@ def generar_picks(
                 "prob": pct,
                 "cuota_justa": (1.0 / prob_fraction) if prob_fraction > 0 else 0.0,
                 "cuota_real": None,
+                "casa": None,
+                "derivada": False,
                 "ev": None,
+                "edge": None,
                 "kickoff": kickoff,
             })
 
@@ -78,7 +155,11 @@ def generar_picks(
     p_btts = prob_btts(lam_h, lam_a, rho=rho)
     add(p_btts, "Ambos anotan: SÍ", "BTTS", MIN_PROB)
 
-    return picks
+    if odds:
+        for pick in picks:
+            attach_odds(pick, odds)
+
+    return filter_by_ev(picks, min_ev)
 
 
 def clasificar_riesgo(prob: float) -> Optional[str]:

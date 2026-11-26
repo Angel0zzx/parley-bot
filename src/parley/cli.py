@@ -15,9 +15,11 @@ from parley.config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TIMEZONE,
+    ODDS_API_KEY,
 )
 from parley.providers.football_data import FootballDataProvider
 from parley.providers.bzzoiro import BzzoiroProvider
+from parley.providers.odds_api import OddsApiClient
 from parley.models.strategy import generar_picks, armar_parleys
 from parley.notifiers.telegram import send_telegram, build_mensaje
 from parley.utils.cache import load_cache
@@ -39,12 +41,18 @@ def debug_dump(picks, tz):
         print(f"▶ {partido}  ({lista[0]['liga']})")
         for p in sorted(lista, key=lambda x: -x["prob"]):
             hora = p["kickoff"].astimezone(tz).strftime("%H:%M") if p.get("kickoff") else "--:--"
+            extra = ""
+            if p.get("cuota_real"):
+                label = "Cuota implícita" if p.get("derivada") else "Cuota"
+                extra = f" | 💰 {label}: {p['cuota_real']:.2f} ({p.get('casa') or '?'})"
+                if p.get("ev") is not None:
+                    extra += f" · EV: {p['ev'] * 100:+.1f}%"
             print(f"    {p['seleccion']:22s} ({p['mercado']:6s}) prob={p['prob']:.1f}% "
-                  f"cuota={p['cuota_justa']:.2f} @ {hora}")
+                  f"cuota={p['cuota_justa']:.2f} @ {hora}{extra}")
         print()
 
 
-def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pasados):
+def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pasados, min_ev=None, sin_cuotas=False):
     # Recargar variables de entorno por si el wizard acaba de actualizar el .env
     fd_key = os.getenv("FOOTBALL_DATA_KEY", FOOTBALL_DATA_KEY)
     bzz_key = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
@@ -83,11 +91,19 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
         return
 
     cache = load_cache()
+    odds_map = {}
+    odds_key = os.getenv("ODDS_API_KEY", ODDS_API_KEY)
+    if not sin_cuotas and odds_key:
+        try:
+            odds_map = OddsApiClient(api_key=odds_key).get_odds_for_matches(partidos, cache)
+            log.info("Cuotas reales obtenidas para %d partidos", len(odds_map))
+        except Exception as exc:
+            log.warning("No se pudieron obtener cuotas reales: %s", type(exc).__name__)
     todos_picks = []
     for partido in partidos:
         hf = provider.get_team_form(partido.get("home_id"), cache)
         af = provider.get_team_form(partido.get("away_id"), cache)
-        picks = generar_picks(partido, hf, af)
+        picks = generar_picks(partido, hf, af, odds=odds_map.get(partido.get("id")), min_ev=min_ev)
         todos_picks.extend(picks)
         log.info("  %s vs %s → %d picks", partido["home"], partido["away"], len(picks))
 
@@ -117,6 +133,8 @@ def main():
     parser.add_argument("--fecha", type=str, default=None, help="YYYY-MM-DD (def. hoy)")
     parser.add_argument("--debug", action="store_true", help="Solo imprime, sin enviar")
     parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
+    parser.add_argument("--min-ev", type=float, default=None, help="EV mínimo para conservar picks con cuota real (def. 0.0)")
+    parser.add_argument("--sin-cuotas", action="store_true", help="Ignora The Odds API y usa solo el modelo")
     args = parser.parse_args()
 
     # Ejecutar el asistente solo si faltan ambas credenciales y la terminal es interactiva
@@ -162,10 +180,10 @@ def main():
     fecha_str = ahora.strftime("%Y-%m-%d %H:%M")
 
     if provider_arg == "ambos":
-        run_provider("fd", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
-        run_provider("bzzoiro", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
+        run_provider("fd", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados, min_ev=args.min_ev, sin_cuotas=args.sin_cuotas)
+        run_provider("bzzoiro", fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados, min_ev=args.min_ev, sin_cuotas=args.sin_cuotas)
     else:
-        run_provider(provider_arg, fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados)
+        run_provider(provider_arg, fecha_obj_str, fecha_str, tz, args.debug, args.incluir_pasados, min_ev=args.min_ev, sin_cuotas=args.sin_cuotas)
 
     if getattr(sys, 'frozen', False):
         input("\nProceso finalizado. Presiona Enter para salir...")

@@ -66,12 +66,18 @@ def build_mensaje(nivel: str, parley: List[Dict[str, Any]], fecha_objetivo: str,
 
     for i, p in enumerate(parley, 1):
         hora = p["kickoff"].astimezone(tz).strftime("%H:%M") if p.get("kickoff") else "--:--"
-        lines.append(
+        bloque = (
             f"<b>{i}. {html.escape(p['partido'])}</b>\n"
             f"   🏆 {html.escape(p['liga'])} · 🕒 {hora}\n"
             f"   🎯 {html.escape(p['seleccion'])} ({html.escape(p['mercado'])})\n"
             f"   📈 Prob: <b>{p['prob']:.1f}%</b> · Cuota justa: {p['cuota_justa']:.2f}\n"
         )
+        if p.get("cuota_real"):
+            label = "Cuota implícita" if p.get("derivada") else "Cuota"
+            casa = html.escape(str(p.get("casa") or "?"))
+            ev_txt = f" · EV: {p['ev'] * 100:+.1f}%" if p.get("ev") is not None else ""
+            bloque += f"   💰 {label}: {p['cuota_real']:.2f} ({casa}){ev_txt}\n"
+        lines.append(bloque)
 
     lines.append(
         f"\n📊 <b>RESUMEN</b>\n"

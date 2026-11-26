@@ -32,6 +32,12 @@ LEAGUE_AVG_HOME_GOALS = float(os.getenv("LEAGUE_AVG_HOME_GOALS", "1.50"))
 LEAGUE_AVG_AWAY_GOALS = float(os.getenv("LEAGUE_AVG_AWAY_GOALS", "1.20"))
 CACHE_VERSION = 2
 
+# --- The Odds API (optional) ---
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
+ODDS_REGIONS = os.getenv("ODDS_REGIONS", "eu")
+MIN_EV = float(os.getenv("MIN_EV", "0.0"))
+ODDS_TTL = 900  # 15 minutes
+
 COMPETICIONES_FD = {
     "PL":  "Premier League",
     "PD":  "La Liga",
