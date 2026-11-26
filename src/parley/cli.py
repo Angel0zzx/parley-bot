@@ -14,6 +14,9 @@ from parley.config import (
     BZZOIRO_API_KEY,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
+    TELEGRAM_FREE_CHAT_ID,
+    TELEGRAM_VIP_CHAT_ID,
+    VIP_CONTACT_USER,
     TIMEZONE,
     ODDS_API_KEY,
 )
@@ -21,7 +24,12 @@ from parley.providers.football_data import FootballDataProvider
 from parley.providers.bzzoiro import BzzoiroProvider
 from parley.providers.odds_api import OddsApiClient
 from parley.models.strategy import generar_picks, armar_parleys
-from parley.notifiers.telegram import send_telegram, build_mensaje
+from parley.notifiers.telegram import (
+    send_telegram,
+    build_mensaje,
+    build_free_mensaje,
+    get_morning_targets,
+)
 from parley.db.repository import save_predictions
 from parley.utils.cache import load_cache
 from parley.utils.setup_wizard import run_setup_wizard
@@ -59,6 +67,10 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
     bzz_key = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+    tg_free = os.getenv("TELEGRAM_FREE_CHAT_ID", TELEGRAM_FREE_CHAT_ID)
+    tg_vip = os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID)
+    vip_contact = os.getenv("VIP_CONTACT_USER", VIP_CONTACT_USER)
+    full_target, free_target = get_morning_targets(tg_vip, tg_free, tg_chat_id)
 
     if provider_code == "fd":
         if not fd_key:
@@ -73,8 +85,8 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
         provider = BzzoiroProvider(bzz_key)
         titulo_prefijo = "SUDAMÉRICA"
 
-    if not debug and (not tg_token or not tg_chat_id):
-        log.error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID en el .env")
+    if not debug and (not tg_token or not (full_target or free_target)):
+        log.error("Faltan TELEGRAM_BOT_TOKEN o un chat de destino en el .env")
         return
 
     log.info("Ejecutando proveedor: %s para fecha %s", titulo_prefijo, fecha_obj_str)
@@ -86,7 +98,8 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
                f"📅 Fecha: <b>{fecha_obj_str}</b>\n\n"
                f"⚠️ No hay partidos programados para esa fecha.")
         if not debug:
-            send_telegram(tg_token, tg_chat_id, msg)
+            target = full_target or free_target or tg_chat_id
+            send_telegram(tg_token, target, msg)
         else:
             print(msg)
         return
@@ -123,10 +136,24 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
                 print(f"  {p['seleccion']} ({p['partido']}) prob={p['prob']:.1f}%")
         return
 
-    for nivel in ["seguro", "medio", "arriesgado"]:
-        msg = build_mensaje(nivel, parleys[nivel], fecha_obj_str, fecha_str, tz, titulo_prefijo)
-        ok = send_telegram(tg_token, tg_chat_id, msg)
-        log.info("Enviado '%s' (%d selecciones): %s", nivel, len(parleys[nivel]), "OK" if ok else "FALLÓ")
+    if full_target:
+        for nivel in ["seguro", "medio", "arriesgado"]:
+            msg = build_mensaje(nivel, parleys[nivel], fecha_obj_str, fecha_str, tz, titulo_prefijo)
+            ok = send_telegram(tg_token, full_target, msg)
+            destino = "VIP" if full_target == tg_vip else "principal"
+            log.info("Enviado '%s' (%d selecciones) a %s: %s", nivel, len(parleys[nivel]), destino, "OK" if ok else "FALLÓ")
+
+    if free_target and free_target != full_target:
+        msg = build_free_mensaje(
+            parleys["seguro"],
+            fecha_obj_str,
+            fecha_str,
+            tz,
+            titulo_prefijo,
+            vip_contact,
+        )
+        ok = send_telegram(tg_token, free_target, msg)
+        log.info("Enviado parley seguro + invitación VIP a FREE: %s", "OK" if ok else "FALLÓ")
 
 
 import os
@@ -140,6 +167,12 @@ def main():
     parser.add_argument("--min-ev", type=float, default=None, help="EV mínimo para conservar picks con cuota real (def. 0.0)")
     parser.add_argument("--sin-cuotas", action="store_true", help="Ignora The Odds API y usa solo el modelo")
     parser.add_argument("--audit", action="store_true", help="Audita picks pendientes y envía el resumen nocturno")
+    parser.add_argument("--add-vip", type=int, default=None, help="Activa/renueva un VIP por USER_ID")
+    parser.add_argument("--days", type=int, default=30, help="Días de suscripción para --add-vip (def. 30)")
+    parser.add_argument("--username", type=str, default=None, help="Username de Telegram para --add-vip")
+    parser.add_argument("--check-subs", action="store_true", help="Expulsa suscriptores VIP vencidos")
+    parser.add_argument("--admin-once", action="store_true", help="Procesa comandos /vip y /estado una vez")
+    parser.add_argument("--admin-listen", action="store_true", help="Polling de comandos admin cada 3s")
     args = parser.parse_args()
 
     # Ejecutar el asistente solo si faltan ambas credenciales y la terminal es interactiva
@@ -157,9 +190,71 @@ def main():
             tg_chat_id=os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID),
             tz=tz,
             debug=args.debug,
+            free_chat_id=os.getenv("TELEGRAM_FREE_CHAT_ID", TELEGRAM_FREE_CHAT_ID),
+            vip_chat_id=os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID),
         )
         if getattr(sys, "frozen", False):
             input("\nProceso finalizado. Presiona Enter para salir...")
+        return
+
+    if args.add_vip is not None:
+        from parley.subscriptions import activate_vip
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+        vip = os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID)
+        result = activate_vip(
+            args.add_vip,
+            days=args.days,
+            username=args.username,
+            telegram_token=token,
+            vip_chat_id=vip,
+        )
+        if result["saved"]:
+            print(f"VIP {result['user_id']} hasta {result['expires_at']:%Y-%m-%d %H:%M} UTC")
+            if result["invite_link"]:
+                print(f"Enlace de un solo uso: {result['invite_link']}")
+            else:
+                print("No se pudo generar el enlace de invitación.")
+        else:
+            print("No se pudo guardar el suscriptor (revisa DATABASE_URL).")
+        if getattr(sys, "frozen", False):
+            input("\nProceso finalizado. Presiona Enter para salir...")
+        return
+
+    if args.check_subs:
+        from parley.subscriptions import revoke_expired_vips
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+        vip = os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID)
+        revocadas = revoke_expired_vips(telegram_token=token, vip_chat_id=vip)
+        print(f"Suscripciones VIP revocadas: {revocadas}")
+        if getattr(sys, "frozen", False):
+            input("\nProceso finalizado. Presiona Enter para salir...")
+        return
+
+    if args.admin_once:
+        from parley.subscriptions import process_admin_commands
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+        admin = os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+        vip = os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID)
+        result = process_admin_commands(
+            telegram_token=token,
+            admin_chat_id=admin,
+            vip_chat_id=vip,
+        )
+        print(f"Comandos admin procesados: {result['processed']}")
+        if getattr(sys, "frozen", False):
+            input("\nProceso finalizado. Presiona Enter para salir...")
+        return
+
+    if args.admin_listen:
+        from parley.subscriptions import admin_listen
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+        admin = os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+        vip = os.getenv("TELEGRAM_VIP_CHAT_ID", TELEGRAM_VIP_CHAT_ID)
+        print("Escuchando comandos admin... Ctrl+C para salir.")
+        try:
+            admin_listen(telegram_token=token, admin_chat_id=admin, vip_chat_id=vip)
+        except KeyboardInterrupt:
+            print("\nDetenido.")
         return
 
     provider_arg = args.provider

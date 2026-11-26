@@ -7,14 +7,14 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from parley.config import DATABASE_URL
+from parley.config import DATABASE_URL, TELEGRAM_FREE_CHAT_ID, TELEGRAM_VIP_CHAT_ID
 from parley.db.repository import (
     calcular_stats,
     get_pending_predictions,
     get_stats,
     update_prediction,
 )
-from parley.notifiers.telegram import send_telegram
+from parley.notifiers.telegram import get_audit_targets, send_telegram
 from parley.providers.football_data import FootballDataProvider
 
 log = logging.getLogger("parley.audit")
@@ -124,6 +124,8 @@ def run_audit(
     tz=None,
     debug: bool = False,
     database_url: Optional[str] = None,
+    free_chat_id: Optional[str] = None,
+    vip_chat_id: Optional[str] = None,
 ) -> None:
     """Resolve pending predictions, persist results and send the nightly summary."""
     db_url = database_url if database_url is not None else DATABASE_URL
@@ -133,6 +135,10 @@ def run_audit(
     if not fd_key:
         log.error("Falta FOOTBALL_DATA_KEY para consultar resultados finales.")
         return
+
+    vip = vip_chat_id if vip_chat_id is not None else TELEGRAM_VIP_CHAT_ID
+    free = free_chat_id if free_chat_id is not None else TELEGRAM_FREE_CHAT_ID
+    targets = get_audit_targets(vip, free, tg_chat_id)
 
     hoy = datetime.now(tz).date() if tz else date.today()
     pendientes = get_pending_predictions(hasta=hoy, database_url=db_url)
@@ -188,9 +194,10 @@ def run_audit(
         print(mensaje)
         return
 
-    if not tg_token or not tg_chat_id:
-        log.error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID para enviar la auditoría.")
+    if not tg_token or not targets:
+        log.error("Faltan TELEGRAM_BOT_TOKEN o chats de destino para enviar la auditoría.")
         return
 
-    ok = send_telegram(tg_token, tg_chat_id, mensaje)
-    log.info("Auditoría nocturna enviada: %s", "OK" if ok else "FALLÓ")
+    for target in targets:
+        ok = send_telegram(tg_token, target, mensaje)
+        log.info("Auditoría enviada a %s: %s", target, "OK" if ok else "FALLÓ")

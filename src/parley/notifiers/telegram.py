@@ -86,3 +86,55 @@ def build_mensaje(nivel: str, parley: List[Dict[str, Any]], fecha_objetivo: str,
     )
     lines.append("⚠️ Modelo estadístico. Sin garantías. Stake plano y responsable.")
     return "\n".join(lines)
+
+
+def get_morning_targets(vip_chat_id: str, free_chat_id: str, fallback_chat_id: str):
+    """Resolve (full_parleys_target, free_sample_target) for the morning run."""
+    vip = (vip_chat_id or "").strip()
+    free = (free_chat_id or "").strip()
+    fallback = (fallback_chat_id or "").strip()
+
+    full_target = vip or ("" if free else fallback)
+    return (full_target or None, free or None)
+
+
+def get_audit_targets(vip_chat_id: str, free_chat_id: str, fallback_chat_id: str) -> List[str]:
+    """Resolve the list of chats that receive the nightly audit."""
+    targets: List[str] = []
+    for target in ((vip_chat_id or "").strip(), (free_chat_id or "").strip()):
+        if target and target not in targets:
+            targets.append(target)
+    if not targets and (fallback_chat_id or "").strip():
+        targets.append(fallback_chat_id.strip())
+    return targets
+
+
+def build_invitacion_vip(vip_contact_user: str = "") -> str:
+    """Build the free-channel invitation to the VIP channel."""
+    contacto = (vip_contact_user or "").strip()
+    if contacto:
+        if not contacto.startswith("@"):
+            contacto = f"@{contacto}"
+        linea_contacto = f"📩 Escríbeme a <b>{html.escape(contacto)}</b> para activar tu acceso."
+    else:
+        linea_contacto = "📩 Contacta al administrador para activar tu acceso."
+
+    return (
+        "🔒 <b>¿Quieres los 3 parleys completos?</b>\n"
+        "El Canal VIP incluye los parleys <b>seguro</b>, <b>medio</b> y <b>arriesgado</b> "
+        "con cuotas reales y <b>EV+</b>.\n"
+        f"{linea_contacto}"
+    )
+
+
+def build_free_mensaje(
+    parley: List[Dict[str, Any]],
+    fecha_objetivo: str,
+    fecha_str: str,
+    tz: ZoneInfo,
+    titulo_prefijo: str = "PARLEY DIARIO",
+    vip_contact_user: str = "",
+) -> str:
+    """Build the free-channel message: safe parley sample + VIP invitation."""
+    base = build_mensaje("seguro", parley, fecha_objetivo, fecha_str, tz, titulo_prefijo)
+    return f"{base}\n\n{build_invitacion_vip(vip_contact_user)}"

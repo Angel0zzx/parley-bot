@@ -46,6 +46,23 @@ CREATE INDEX IF NOT EXISTS idx_predictions_estado_fecha
     ON predictions (estado, fecha);
 """
 
+CREATE_SUBSCRIBERS_SQL = """
+CREATE TABLE IF NOT EXISTS subscribers (
+    id SERIAL PRIMARY KEY,
+    telegram_user_id BIGINT UNIQUE NOT NULL,
+    username VARCHAR,
+    plan VARCHAR DEFAULT 'mensual',
+    expires_at TIMESTAMP NOT NULL,
+    activo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+"""
+
+CREATE_SUBSCRIBERS_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_subscribers_activo_expires
+    ON subscribers (activo, expires_at);
+"""
+
 VALID_ESTADOS = ("GANADA", "PERDIDA", "NULA")
 
 
@@ -76,6 +93,8 @@ def ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(CREATE_TABLE_SQL)
         cur.execute(CREATE_INDEX_SQL)
+        cur.execute(CREATE_SUBSCRIBERS_SQL)
+        cur.execute(CREATE_SUBSCRIBERS_INDEX_SQL)
     conn.commit()
 
 
@@ -261,5 +280,142 @@ def get_stats(database_url: Optional[str] = None) -> Dict[str, Any]:
         conn.rollback()
         log.error("Error calculando estadísticas: %s", type(exc).__name__)
         return calcular_stats([])
+    finally:
+        conn.close()
+
+
+def get_subscriber(telegram_user_id: Any, database_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Return a subscriber row by Telegram user id."""
+    conn = _connect(database_url)
+    if conn is None:
+        return None
+
+    try:
+        ensure_schema(conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, telegram_user_id, username, plan, expires_at, activo, created_at
+                FROM subscribers
+                WHERE telegram_user_id = %s
+                """,
+                (int(telegram_user_id),),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        conn.rollback()
+        log.error("Error leyendo suscriptor %s: %s", telegram_user_id, type(exc).__name__)
+        return None
+    finally:
+        conn.close()
+
+
+def upsert_subscriber(
+    telegram_user_id: Any,
+    expires_at: datetime,
+    username: Optional[str] = None,
+    plan: str = "mensual",
+    database_url: Optional[str] = None,
+) -> bool:
+    """Insert or renew a subscriber, keeping the previous username when omitted."""
+    conn = _connect(database_url)
+    if conn is None:
+        return False
+
+    try:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO subscribers
+                    (telegram_user_id, username, plan, expires_at, activo)
+                VALUES (%s, %s, %s, %s, TRUE)
+                ON CONFLICT (telegram_user_id) DO UPDATE
+                SET username = COALESCE(NULLIF(EXCLUDED.username, ''), subscribers.username),
+                    plan = EXCLUDED.plan,
+                    expires_at = EXCLUDED.expires_at,
+                    activo = TRUE
+                """,
+                (int(telegram_user_id), username, plan, expires_at),
+            )
+        conn.commit()
+        return True
+    except Exception as exc:
+        conn.rollback()
+        log.error("Error guardando suscriptor %s: %s", telegram_user_id, type(exc).__name__)
+        return False
+    finally:
+        conn.close()
+
+
+def get_expired_vips(database_url: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return active subscribers whose expiry is in the past."""
+    conn = _connect(database_url)
+    if conn is None:
+        return []
+
+    try:
+        ensure_schema(conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, telegram_user_id, username, expires_at
+                FROM subscribers
+                WHERE activo = TRUE AND expires_at < NOW()
+                ORDER BY expires_at
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
+    except Exception as exc:
+        conn.rollback()
+        log.error("Error leyendo suscriptores vencidos: %s", type(exc).__name__)
+        return []
+    finally:
+        conn.close()
+
+
+def mark_subscriber_inactive(telegram_user_id: Any, database_url: Optional[str] = None) -> bool:
+    """Mark a subscriber as inactive. Returns True when a row was updated."""
+    conn = _connect(database_url)
+    if conn is None:
+        return False
+
+    try:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE subscribers SET activo = FALSE WHERE telegram_user_id = %s",
+                (int(telegram_user_id),),
+            )
+            updated = cur.rowcount
+        conn.commit()
+        return updated > 0
+    except Exception as exc:
+        conn.rollback()
+        log.error("Error desactivando suscriptor %s: %s", telegram_user_id, type(exc).__name__)
+        return False
+    finally:
+        conn.close()
+
+
+def count_active_vips(database_url: Optional[str] = None) -> int:
+    """Count subscribers that are active and not expired."""
+    conn = _connect(database_url)
+    if conn is None:
+        return 0
+
+    try:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM subscribers WHERE activo = TRUE AND expires_at >= NOW()"
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+    except Exception as exc:
+        conn.rollback()
+        log.error("Error contando suscriptores activos: %s", type(exc).__name__)
+        return 0
     finally:
         conn.close()
