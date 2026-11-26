@@ -97,6 +97,41 @@ class FootballDataProvider(BaseProvider):
         log.info("Partidos Football-Data en %s: %d", fecha_str, len(partidos))
         return partidos
 
+    def get_results(self, fecha_desde: str, fecha_hasta: str) -> Dict[str, Dict[str, Any]]:
+        """Fetch FINISHED matches in a date range, keyed by football-data match id."""
+        resultados: Dict[str, Dict[str, Any]] = {}
+        for code, nombre in COMPETICIONES_FD.items():
+            data = self._api_get(
+                f"/competitions/{code}/matches",
+                params={
+                    "dateFrom": fecha_desde,
+                    "dateTo": fecha_hasta,
+                    "status": "FINISHED",
+                },
+            )
+            if not data:
+                continue
+
+            for m in data.get("matches", []):
+                if m.get("status") != "FINISHED":
+                    continue
+                score = m.get("score", {}).get("fullTime", {})
+                home_goals = score.get("home")
+                away_goals = score.get("away")
+                if home_goals is None or away_goals is None:
+                    continue
+                resultados[str(m.get("id"))] = {
+                    "home_goals": home_goals,
+                    "away_goals": away_goals,
+                    "home": m.get("homeTeam", {}).get("name", "?"),
+                    "away": m.get("awayTeam", {}).get("name", "?"),
+                    "liga": nombre,
+                    "utc_date": m.get("utcDate"),
+                }
+
+        log.info("Resultados FINISHED %s..%s: %d", fecha_desde, fecha_hasta, len(resultados))
+        return resultados
+
     def get_team_form(self, team_id: Any, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         if cache is None:
             cache = load_cache()

@@ -121,6 +121,8 @@ def generar_picks(
             picks.append({
                 "partido": partido_str,
                 "liga": liga,
+                "fixture_id": partido.get("id"),
+                "tier": clasificar_riesgo(pct),
                 "seleccion": seleccion,
                 "mercado": mercado,
                 "prob": pct,

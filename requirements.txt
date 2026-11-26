@@ -1,5 +1,6 @@
 requests
 python-dotenv
 tzdata
+psycopg2-binary
 pytest
 pyinstaller

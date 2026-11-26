@@ -22,6 +22,7 @@ from parley.providers.bzzoiro import BzzoiroProvider
 from parley.providers.odds_api import OddsApiClient
 from parley.models.strategy import generar_picks, armar_parleys
 from parley.notifiers.telegram import send_telegram, build_mensaje
+from parley.db.repository import save_predictions
 from parley.utils.cache import load_cache
 from parley.utils.setup_wizard import run_setup_wizard
 
@@ -108,6 +109,9 @@ def run_provider(provider_code, fecha_obj_str, fecha_str, tz, debug, incluir_pas
         log.info("  %s vs %s → %d picks", partido["home"], partido["away"], len(picks))
 
     log.info("Picks generados (%s): %d", titulo_prefijo, len(todos_picks))
+    if not debug and todos_picks:
+        guardadas = save_predictions(todos_picks, fecha_obj_str)
+        log.info("Predicciones persistidas: %d", guardadas)
     parleys = armar_parleys(todos_picks)
 
     if debug:
@@ -135,6 +139,7 @@ def main():
     parser.add_argument("--incluir-pasados", action="store_true", help="Incluye partidos que ya empezaron hoy")
     parser.add_argument("--min-ev", type=float, default=None, help="EV mínimo para conservar picks con cuota real (def. 0.0)")
     parser.add_argument("--sin-cuotas", action="store_true", help="Ignora The Odds API y usa solo el modelo")
+    parser.add_argument("--audit", action="store_true", help="Audita picks pendientes y envía el resumen nocturno")
     args = parser.parse_args()
 
     # Ejecutar el asistente solo si faltan ambas credenciales y la terminal es interactiva
@@ -142,6 +147,20 @@ def main():
     current_bzz = os.getenv("BZZOIRO_API_KEY", BZZOIRO_API_KEY)
     if not current_fd and not current_bzz and sys.stdin.isatty():
         run_setup_wizard(ENV_PATH)
+
+    if args.audit:
+        from parley.audit import run_audit
+        tz = ZoneInfo(os.getenv("TZ_LOCAL", TIMEZONE))
+        run_audit(
+            fd_key=os.getenv("FOOTBALL_DATA_KEY", FOOTBALL_DATA_KEY),
+            tg_token=os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN),
+            tg_chat_id=os.getenv("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID),
+            tz=tz,
+            debug=args.debug,
+        )
+        if getattr(sys, "frozen", False):
+            input("\nProceso finalizado. Presiona Enter para salir...")
+        return
 
     provider_arg = args.provider
     # Interactive menu if no arguments passed (e.g. double click on Windows .exe)

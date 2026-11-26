@@ -8,3 +8,4 @@ build/
 cache.json
 .pytest_cache/
 .venv/
+*.egg-info/

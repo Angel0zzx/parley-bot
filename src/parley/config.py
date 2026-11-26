@@ -24,6 +24,7 @@ BZZOIRO_API_KEY = os.getenv("BZZOIRO_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TIMEZONE = os.getenv("TZ_LOCAL", "America/Guayaquil")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # --- Statistical model v2.0 ---
 DIXON_COLES_RHO = float(os.getenv("DIXON_COLES_RHO", "-0.10"))
