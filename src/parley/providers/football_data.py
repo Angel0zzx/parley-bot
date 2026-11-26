@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Optional
 from zoneinfo import ZoneInfo
 import requests
 
-from parley.providers.base import BaseProvider
+from parley.providers.base import BaseProvider, summarize_form
 from parley.config import COMPETICIONES_FD, RECENT_MATCHES, MIN_MATCHES_REQUIRED
 from parley.utils.cache import load_cache, save_cache
 
@@ -97,7 +97,7 @@ class FootballDataProvider(BaseProvider):
         log.info("Partidos Football-Data en %s: %d", fecha_str, len(partidos))
         return partidos
 
-    def get_team_form(self, team_id: Any, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, float]]:
+    def get_team_form(self, team_id: Any, cache: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         if cache is None:
             cache = load_cache()
 
@@ -115,7 +115,7 @@ class FootballDataProvider(BaseProvider):
         partidos.sort(key=lambda m: m.get("utcDate", ""), reverse=True)
         partidos = partidos[:RECENT_MATCHES]
 
-        gf, ga = [], []
+        home_gf, home_ga, away_gf, away_ga = [], [], [], []
         for m in partidos:
             score = m.get("score", {}).get("fullTime", {})
             if not score:
@@ -125,15 +125,20 @@ class FootballDataProvider(BaseProvider):
             if h is None or a is None:
                 continue
             es_local = m.get("homeTeam", {}).get("id") == team_id
-            gf.append(h if es_local else a)
-            ga.append(a if es_local else h)
+            if es_local:
+                home_gf.append(h)
+                home_ga.append(a)
+            else:
+                away_gf.append(a)
+                away_ga.append(h)
 
-        if len(gf) < MIN_MATCHES_REQUIRED:
+        total = len(home_gf) + len(away_gf)
+        if total < MIN_MATCHES_REQUIRED:
             cache.setdefault("form", {})[key] = None
             save_cache(cache)
             return None
 
-        form = {"gf": sum(gf) / len(gf), "ga": sum(ga) / len(ga), "n": len(gf)}
+        form = summarize_form(home_gf, home_ga, away_gf, away_ga)
         cache.setdefault("form", {})[key] = form
         save_cache(cache)
         return form

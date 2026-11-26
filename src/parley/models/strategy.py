@@ -3,66 +3,80 @@ Strategy module: pick generation, risk classification, and parley building.
 """
 
 from typing import Dict, List, Any, Optional
-from parley.models.poisson import expected_goals, prob_over, prob_btts
+from parley.config import DIXON_COLES_RHO
+from parley.models.poisson import (
+    expected_goals_v2,
+    prob_1x2,
+    prob_double_chance,
+    prob_dnb,
+    prob_over,
+    prob_btts,
+)
 
 LINEAS_GOLES = [1.5, 2.5, 3.5]
 RIESGO_SEGURO_MIN = 72.0
 RIESGO_MEDIO_MIN = 62.0
-RIESGO_BAJO_MIN = 52.0
+RIESGO_BAJO_MIN = 48.0
+MIN_PROB = 52.0
+MIN_PROB_1X2 = 48.0
 PROB_MAX = 95.0
 PARLEY_MAX = 3
 
 
-def generar_picks(partido: Dict[str, Any], home_form: Optional[Dict[str, float]], away_form: Optional[Dict[str, float]]) -> List[Dict[str, Any]]:
-    """Generate betting picks for a match based on expected goals and Poisson probabilities."""
+def generar_picks(
+    partido: Dict[str, Any],
+    home_form: Optional[Dict[str, Any]],
+    away_form: Optional[Dict[str, Any]],
+    rho: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    """Generate picks for all v2.0 markets from the Dixon-Coles model."""
     if not home_form or not away_form:
         return []
 
-    lam_h, lam_a = expected_goals(home_form, away_form)
-    lam_total = lam_h + lam_a
+    rho = DIXON_COLES_RHO if rho is None else rho
+    lam_h, lam_a = expected_goals_v2(home_form, away_form)
 
-    picks = []
+    picks: List[Dict[str, Any]] = []
     partido_str = f"{partido.get('home', '?')} vs {partido.get('away', '?')}"
     liga = partido.get("liga", "?")
     kickoff = partido.get("kickoff")
 
+    def add(prob_fraction: float, seleccion: str, mercado: str, min_prob: float) -> None:
+        pct = prob_fraction * 100.0
+        if min_prob <= pct <= PROB_MAX:
+            picks.append({
+                "partido": partido_str,
+                "liga": liga,
+                "seleccion": seleccion,
+                "mercado": mercado,
+                "prob": pct,
+                "cuota_justa": (1.0 / prob_fraction) if prob_fraction > 0 else 0.0,
+                "cuota_real": None,
+                "ev": None,
+                "kickoff": kickoff,
+            })
+
+    p_1x2 = prob_1x2(lam_h, lam_a, rho)
+    add(p_1x2["home"], "Local (1)", "1X2", MIN_PROB_1X2)
+    add(p_1x2["draw"], "Empate (X)", "1X2", MIN_PROB_1X2)
+    add(p_1x2["away"], "Visitante (2)", "1X2", MIN_PROB_1X2)
+
+    p_dc = prob_double_chance(lam_h, lam_a, rho)
+    add(p_dc["1X"], "1X (Local o Empate)", "Doble Oportunidad", MIN_PROB)
+    add(p_dc["X2"], "X2 (Empate o Visitante)", "Doble Oportunidad", MIN_PROB)
+
+    p_dnb = prob_dnb(lam_h, lam_a, rho)
+    add(p_dnb["home"], "Local DNB", "DNB", MIN_PROB)
+    add(p_dnb["away"], "Visitante DNB", "DNB", MIN_PROB)
+
     for linea in LINEAS_GOLES:
-        p_over = prob_over(lam_total, linea)
+        p_over = prob_over(lam_h, linea, lam_away=lam_a, rho=rho)
         p_under = 1.0 - p_over
+        add(p_over, f"Over {linea}", "Goles", MIN_PROB)
+        add(p_under, f"Under {linea}", "Goles", MIN_PROB)
 
-        if RIESGO_BAJO_MIN <= p_over * 100 <= PROB_MAX:
-            picks.append({
-                "partido": partido_str,
-                "liga": liga,
-                "seleccion": f"Over {linea}",
-                "mercado": "Goles",
-                "prob": p_over * 100,
-                "cuota_justa": 1 / p_over if p_over > 0 else 0,
-                "kickoff": kickoff,
-            })
-
-        if RIESGO_BAJO_MIN <= p_under * 100 <= PROB_MAX:
-            picks.append({
-                "partido": partido_str,
-                "liga": liga,
-                "seleccion": f"Under {linea}",
-                "mercado": "Goles",
-                "prob": p_under * 100,
-                "cuota_justa": 1 / p_under if p_under > 0 else 0,
-                "kickoff": kickoff,
-            })
-
-    p_btts = prob_btts(lam_h, lam_a)
-    if RIESGO_BAJO_MIN <= p_btts * 100 <= PROB_MAX:
-        picks.append({
-            "partido": partido_str,
-            "liga": liga,
-            "seleccion": "Ambos anotan: SÍ",
-            "mercado": "BTTS",
-            "prob": p_btts * 100,
-            "cuota_justa": 1 / p_btts if p_btts > 0 else 0,
-            "kickoff": kickoff,
-        })
+    p_btts = prob_btts(lam_h, lam_a, rho=rho)
+    add(p_btts, "Ambos anotan: SÍ", "BTTS", MIN_PROB)
 
     return picks
 

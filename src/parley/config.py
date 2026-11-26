@@ -25,6 +25,13 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKE
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TIMEZONE = os.getenv("TZ_LOCAL", "America/Guayaquil")
 
+# --- Statistical model v2.0 ---
+DIXON_COLES_RHO = float(os.getenv("DIXON_COLES_RHO", "-0.10"))
+SHRINKAGE_K = float(os.getenv("SHRINKAGE_K", "4.5"))
+LEAGUE_AVG_HOME_GOALS = float(os.getenv("LEAGUE_AVG_HOME_GOALS", "1.50"))
+LEAGUE_AVG_AWAY_GOALS = float(os.getenv("LEAGUE_AVG_AWAY_GOALS", "1.20"))
+CACHE_VERSION = 2
+
 COMPETICIONES_FD = {
     "PL":  "Premier League",
     "PD":  "La Liga",
