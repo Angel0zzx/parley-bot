@@ -1,9 +1,6 @@
 name: Auditoría Nocturna
 
 on:
-  schedule:
-    # 04:00 UTC = 23:00 America/Bogota
-    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
